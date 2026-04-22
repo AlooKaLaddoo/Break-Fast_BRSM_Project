@@ -1,0 +1,108 @@
+--- CELL 69 ---
+### Generalized Linear Model (GLM) Analysis
+
+To get a more robust statistical model of the factors influencing memory performance, I will use a Generalized Linear Model (GLM). Specifically, I'll use logistic regression, since the outcome of each trial (correct or incorrect) is binary.
+
+The model will assess the impact of:
+*   **Condition** (AB vs. NB)
+*   **Stimulus Type** (Target vs. Lure)
+*   The **interaction** between condition and stimulus type.
+
+This will help determine if the experimental condition significantly predicts the likelihood of a correct response, while controlling for whether the video was a target or a lure.
+--- CELL 70 ---
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+from scipy import stats
+
+# Prepare TRIALS_CLEAN if not already defined (using TRIALS as base)
+if 'TRIALS_CLEAN' not in locals():
+    print("Creating TRIALS_CLEAN from TRIALS...")
+    TRIALS_CLEAN = TRIALS.dropna(subset=['accuracy', 'rt', 'confidence']).copy()
+    TRIALS_CLEAN = TRIALS_CLEAN.drop_duplicates(subset=['subject_id', 'movie_id'], keep='first')
+    print(f"TRIALS_CLEAN shape: {TRIALS_CLEAN.shape}")
+
+# Prepare the data for the GLM model
+glm_data = TRIALS_CLEAN.copy()
+
+# Ensure 'condition' and 'target_type' are treated as categorical
+glm_data['condition'] = glm_data['condition'].astype('category')
+glm_data['target_type'] = glm_data['target_type'].astype('category')
+
+# Set reference categories for interpretation
+glm_data['condition'] = glm_data['condition'].cat.reorder_categories(['NB', 'AB'])  # NB as reference
+glm_data['target_type'] = glm_data['target_type'].cat.reorder_categories(['BB', 'EM'])  # BB as reference
+
+# ── Generalized Linear Model: Logistic Regression ────────────────────────────
+# Predicting accuracy (binary: correct=1, incorrect=0) based on condition, stimulus type, and their interaction
+formula = "accuracy ~ C(condition) * C(target_type)"
+
+# Fit as logistic regression (GLM with Binomial family)
+glm_model = smf.logit(formula=formula, data=glm_data).fit()
+
+print("=" * 80)
+print("GENERALIZED LINEAR MODEL (LOGISTIC REGRESSION)")
+print("=" * 80)
+print(glm_model.summary())
+
+# ── Model Statistics ────────────────────────────────────────────────────────
+print("\n" + "=" * 80)
+print("MODEL STATISTICS")
+print("=" * 80)
+print(f"Pseudo R-squared (McFadden): {glm_model.prsquared:.4f}")
+print(f"Log-Likelihood: {glm_model.llf:.2f}")
+print(f"AIC: {glm_model.aic:.2f}")
+print(f"BIC: {glm_model.bic:.2f}")
+
+# ── Odds Ratios ────────────────────────────────────────────────────────────
+print("\n" + "=" * 80)
+print("ODDS RATIOS (Exponentiated Coefficients)")
+print("=" * 80)
+odds_ratios = np.exp(glm_model.params)
+conf_int = np.exp(glm_model.conf_int())
+odds_summary = pd.DataFrame({
+    'Odds Ratio': odds_ratios,
+    'Lower CI': conf_int[0],
+    'Upper CI': conf_int[1]
+})
+print(odds_summary.round(4))
+
+# ── Predictions and Model Performance ────────────────────────────────────────
+glm_data['predicted_prob'] = glm_model.predict(glm_data)
+glm_data['predicted_accuracy'] = (glm_data['predicted_prob'] >= 0.5).astype(int)
+
+# Calculate accuracy of predictions
+model_accuracy = (glm_data['predicted_accuracy'] == glm_data['accuracy']).mean()
+print(f"\nModel Prediction Accuracy: {model_accuracy:.4f}")
+
+# ── Visualization of Model Predictions ────────────────────────────────────────
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Plot 1: Predicted Probabilities by Condition and Target Type
+pred_data = glm_data.groupby(['condition', 'target_type'])['predicted_prob'].mean().reset_index()
+sns.barplot(x='condition', y='predicted_prob', hue='target_type', data=pred_data, ax=axes[0])
+axes[0].set_title('Predicted Probability of Accuracy by Condition & Target Type')
+axes[0].set_ylabel('Predicted Probability')
+axes[0].set_ylim([0, 1])
+
+# Plot 2: Actual vs Predicted by Condition
+actual_vs_pred = glm_data.groupby('condition').agg(
+    actual_accuracy = ('accuracy', 'mean'),
+    predicted_accuracy = ('predicted_prob', 'mean')
+).reset_index()
+x = np.arange(len(actual_vs_pred))
+width = 0.35
+axes[1].bar(x - width/2, actual_vs_pred['actual_accuracy'], width, label='Actual')
+axes[1].bar(x + width/2, actual_vs_pred['predicted_accuracy'], width, label='Predicted')
+axes[1].set_xlabel('Condition')
+axes[1].set_ylabel('Accuracy')
+axes[1].set_title('Actual vs Predicted Accuracy by Condition')
+axes[1].set_xticks(x)
+axes[1].set_xticklabels(actual_vs_pred['condition'])
+axes[1].legend()
+axes[1].set_ylim([0, 1])
+
+plt.tight_layout()
+plt.show()
+
+print("\nGLM analysis complete!")
+
